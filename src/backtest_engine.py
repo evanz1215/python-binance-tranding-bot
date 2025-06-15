@@ -15,7 +15,7 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 from .config import config
-from .data_manager import data_manager
+from .data_manager_fixed import data_manager
 from .strategies import get_strategy
 
 

@@ -79,6 +79,7 @@ cp .env.example .env
 BINANCE_API_KEY=your_api_key_here
 BINANCE_SECRET_KEY=your_secret_key_here
 BINANCE_TESTNET=true  # 建議先在測試網測試
+DEMO_MODE=true        # 啟用演示模式，無需真實API金鑰
 
 # 交易參數
 POSITION_SIZE_PCT=0.1    # 每筆交易使用10%資金
@@ -86,6 +87,14 @@ STOP_LOSS_PCT=0.05       # 5%停損
 TAKE_PROFIT_PCT=0.15     # 15%止盈
 MAX_POSITIONS=10         # 最多同時持有10個倉位
 ```
+
+> **🚧 演示模式說明**
+> 
+> 當 `DEMO_MODE=true` 時，系統會：
+> - 使用模擬數據替代真實API呼叫
+> - 允許在沒有有效API金鑰的情況下運行
+> - 適合學習和測試系統功能
+> - 所有交易操作都只是模擬，不會產生真實交易
 
 ### 3. 初始化數據庫
 
@@ -115,6 +124,52 @@ python main.py api
 ```
 
 然後訪問 http://localhost:8000 查看管理介面。
+
+### 🔑 API 金鑰設定指南
+
+#### 獲取 Binance 測試網路 API 金鑰
+
+1. **訪問 Binance 測試網路**
+   - 前往：https://testnet.binance.vision/
+   - 使用 GitHub 帳號登入
+
+2. **創建 API 金鑰**
+   - 登入後點選 "Generate HMAC_SHA256 Key"
+   - 複製 API Key 和 Secret Key
+
+3. **配置 .env 檔案**
+   ```bash
+   BINANCE_API_KEY=your_testnet_api_key_here
+   BINANCE_SECRET_KEY=your_testnet_secret_key_here
+   BINANCE_TESTNET=true
+   DEMO_MODE=false  # 設為 false 以連接真實 API
+   ```
+
+#### 獲取正式環境 API 金鑰
+
+1. **訪問 Binance 官網**
+   - 前往：https://www.binance.com/
+   - 登入您的帳戶
+
+2. **創建 API 金鑰**
+   - 前往 "API Management"
+   - 創建新的 API 金鑰
+   - 設定適當的權限（現貨交易、期貨交易等）
+   - 設定 IP 白名單以提高安全性
+
+3. **配置生產環境**
+   ```bash
+   BINANCE_API_KEY=your_production_api_key
+   BINANCE_SECRET_KEY=your_production_secret_key
+   BINANCE_TESTNET=false  # 設為 false 使用正式環境
+   DEMO_MODE=false
+   ```
+
+> ⚠️ **安全提醒**
+> - 永遠不要將 API 金鑰提交到 Git 儲存庫
+> - 使用 IP 白名單限制 API 存取
+> - 定期輪換 API 金鑰
+> - 給予 API 金鑰最小必要權限
 
 ## 📋 詳細使用指南
 

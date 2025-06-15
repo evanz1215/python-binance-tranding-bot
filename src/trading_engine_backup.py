@@ -23,15 +23,13 @@ class TradingEngine:
     """Main trading engine"""
     
     def __init__(self, strategy_name: str = "ma_cross", **strategy_params):
-        self.strategy_name = strategy_name
         self.strategy = get_strategy(strategy_name, **strategy_params)
         self.session_factory = get_session_factory(config.database.url)
         self.is_running = False
         self.session_id = None
         self.monitored_symbols = []
         self.last_analysis_time = {}
-        
-    def get_session(self) -> Session:
+          def get_session(self) -> Session:
         """Get database session"""
         return self.session_factory()
     
@@ -93,20 +91,12 @@ class TradingEngine:
             # Get symbols to monitor
             self.monitored_symbols = self._get_monitored_symbols()
             logger.info(f"Monitoring {len(self.monitored_symbols)} symbols")
-              # Create trading session
+            
+            # Create trading session
             self.session_id = f"session_{int(datetime.utcnow().timestamp())}"
             
-            # Get initial balance from futures account
-            try:
-                if config.binance.trading_mode == "futures":
-                    account = binance_client.get_futures_account()
-                    initial_balance = float(account.get('totalWalletBalance', 0.0))
-                else:
-                    balance = binance_client.get_balance(config.trading.base_currency)
-                    initial_balance = balance.get('total', 0.0)
-            except Exception as e:
-                logger.warning(f"Failed to get balance, using default: {e}")
-                initial_balance = 0.0
+            balance = binance_client.get_balance(config.trading.base_currency)
+            initial_balance = balance.get('total', 0.0)
             
             with self.get_session() as session:
                 trading_session = TradingSession(
@@ -310,16 +300,11 @@ class TradingEngine:
     async def _execute_buy_order(self, signal: Signal, current_price: float) -> None:
         """Execute a buy order"""
         try:
-            symbol = signal.symbol            # Get available balance
-            if config.binance.trading_mode == "futures":
-                account = binance_client.get_futures_account()
-                available_balance = float(account.get('availableBalance', 0.0))
-            else:
-                balance = binance_client.get_balance(config.trading.base_currency)
-                if isinstance(balance, dict):
-                    available_balance = float(balance.get('free', 0.0))
-                else:
-                    available_balance = 0.0
+            symbol = signal.symbol
+            
+            # Get available balance
+            balance = binance_client.get_balance(config.trading.base_currency)
+            available_balance = balance.get('free', 0.0)
             
             # Calculate position size
             position_size = self.strategy.calculate_position_size(
@@ -437,7 +422,8 @@ class TradingEngine:
                     price=float(order['fills'][0]['price']) if order['fills'] else 0.0,
                     fee=sum(float(fill['commission']) for fill in order['fills']),
                     status=order['status'],
-                    timestamp=datetime.utcnow()                )
+                    timestamp=datetime.utcnow()
+                )
                 
                 session.add(trade)
                 session.commit()
@@ -481,13 +467,9 @@ class TradingEngine:
         try:
             if not self.session_id:
                 return
-              # 根據交易模式選擇正確的餘額查詢方法
-            if config.binance.trading_mode == "futures":
-                account = binance_client.get_futures_account()
-                current_balance = float(account.get('totalWalletBalance', 0.0))
-            else:
-                balance = binance_client.get_balance(config.trading.base_currency)
-                current_balance = float(balance.get('total', 0.0)) if isinstance(balance, dict) else 0.0
+            
+            balance = binance_client.get_balance(config.trading.base_currency)
+            current_balance = balance.get('total', 0.0)
             
             with self.get_session() as session:
                 trading_session = session.query(TradingSession).filter_by(

@@ -22,20 +22,20 @@ from .database.models import MarketData, Symbol, get_session_factory
 
 class DataManager:
     """Manages market data collection, storage and retrieval"""
-
+    
     def __init__(self):
         self.session_factory = get_session_factory(config.database.url)
         self.timeframes = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}
-
+        
     def get_session(self) -> Session:
         """Get database session"""
         return self.session_factory()
-
+        
     def update_symbol_info(self) -> None:
         """Update symbol information in database"""
         try:
             logger.info("Updating symbol information...")
-            symbols_info = binance_client.get_symbol_info()
+            symbols_info = binance_client.get_all_symbols_info()
 
             # Ensure symbols_info is a list
             if not isinstance(symbols_info, list):
@@ -56,6 +56,7 @@ class DataManager:
                     if symbol:
                         # Update existing symbol
                         symbol.status = symbol_data.get("status", "UNKNOWN")
+                        symbol.updated_at = datetime.utcnow()
                     else:
                         # Create new symbol
                         filters = {f["filterType"]: f for f in symbol_data.get("filters", [])}
@@ -95,8 +96,9 @@ class DataManager:
         """Collect market data for a specific symbol and timeframe"""
         try:
             # Get historical klines from Binance
+            start_timestamp = int(start_time.timestamp() * 1000) if start_time else None
             klines = binance_client.get_klines(
-                symbol=symbol, interval=timeframe, limit=limit, start_time=start_time
+                symbol=symbol, interval=timeframe, limit=limit, start_time=start_timestamp
             )
 
             if not klines:
@@ -118,10 +120,11 @@ class DataManager:
                     # Check if data already exists
                     existing = (
                         session.query(MarketData)
-                        .filter_by(symbol=symbol, timeframe=timeframe, open_time=timestamp)                        .first()
+                        .filter_by(symbol=symbol, timeframe=timeframe, open_time=timestamp)
+                        .first()
                     )
 
-                    if existing:  # Update existing data
+                    if existing:  # Update existing data using setattr
                         setattr(existing, "open_price", open_price)
                         setattr(existing, "high_price", high_price)
                         setattr(existing, "low_price", low_price)
@@ -216,11 +219,10 @@ class DataManager:
                     session.query(MarketData)
                     .filter_by(symbol=symbol, timeframe=timeframe)
                     .order_by(MarketData.open_time.desc())
-                    .first()                )
+                    .first()
+                )
 
-                if latest:
-                    return latest.open_time  # type: ignore
-                return None
+                return latest.open_time if latest else None
         except Exception as e:
             logger.error(f"Failed to get latest timestamp: {e}")
             return None
@@ -280,7 +282,9 @@ class DataManager:
             with self.get_session() as session:
                 deleted = (
                     session.query(MarketData).filter(MarketData.open_time < cutoff_date).delete()
-                )                session.commit()
+                )
+
+                session.commit()
                 logger.info(f"Cleaned up {deleted} old records")
 
         except Exception as e:
@@ -394,15 +398,21 @@ class DataManager:
                 ).first()
                 
                 if existing:
-                    # 更新現有數據
-                    existing.close_time = datetime.fromtimestamp(kline[6] / 1000)
-                    existing.open_price = float(kline[1])
-                    existing.high_price = float(kline[2])
-                    existing.low_price = float(kline[3])
-                    existing.close_price = float(kline[4])
-                    existing.volume = float(kline[5])
-                    existing.quote_volume = float(kline[7])
-                    existing.trades_count = int(kline[8])
+                    # 更新現有數據 (使用 session.merge 或直接更新)
+                    session.query(MarketData).filter(
+                        MarketData.symbol == symbol,
+                        MarketData.timeframe == timeframe,
+                        MarketData.open_time == open_time
+                    ).update({
+                        MarketData.close_time: datetime.fromtimestamp(kline[6] / 1000),
+                        MarketData.open_price: float(kline[1]),
+                        MarketData.high_price: float(kline[2]),
+                        MarketData.low_price: float(kline[3]),
+                        MarketData.close_price: float(kline[4]),
+                        MarketData.volume: float(kline[5]),
+                        MarketData.quote_volume: float(kline[7]),
+                        MarketData.trades_count: int(kline[8])
+                    })
                 else:
                     # 創建新記錄
                     market_data = MarketData(

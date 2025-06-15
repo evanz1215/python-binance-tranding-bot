@@ -1,14 +1,13 @@
 """
 Risk management system for the trading bot
 """
-from datetime import datetime, timedelta
+from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from loguru import logger
 
 from .config import config
 from .binance_client import binance_client
-from .database.models import Position, Trade, TradingSession
 
 
 @dataclass
@@ -28,18 +27,18 @@ class RiskManager:
     """Comprehensive risk management system"""
     
     def __init__(self):
-        self.daily_start_balance = None
-        self.session_start_balance = None
-        self.max_balance_today = None
-        self.positions = {}  # symbol -> position info
-        self.daily_trades = []
-        
+        self.daily_start_balance: Optional[float] = None
+        self.session_start_balance: Optional[float] = None
+        self.max_balance_today: Optional[float] = None
+        self.daily_start_date: Optional[date] = None
+        self.positions: Dict[str, Dict] = {}  # symbol -> position info
+        self.daily_trades: List = []
+    
     def initialize_session(self) -> None:
         """Initialize risk management for new trading session"""
         try:
-            # Get current balance
-            balance = binance_client.get_balance(config.trading.base_currency)
-            current_balance = balance.get('total', 0.0)
+            # Get current balance based on trading mode
+            current_balance = self._get_current_balance()
             
             # Set session start balance
             self.session_start_balance = current_balance
@@ -47,7 +46,7 @@ class RiskManager:
             # Set daily start balance if not set today
             today = datetime.utcnow().date()
             if (self.daily_start_balance is None or 
-                not hasattr(self, 'daily_start_date') or 
+                self.daily_start_date is None or 
                 self.daily_start_date != today):
                 self.daily_start_balance = current_balance
                 self.max_balance_today = current_balance
@@ -55,7 +54,7 @@ class RiskManager:
                 self.daily_trades = []
             
             # Update max balance
-            if current_balance > self.max_balance_today:
+            if self.max_balance_today is None or current_balance > self.max_balance_today:
                 self.max_balance_today = current_balance
                 
             logger.info(f"Risk management initialized - Balance: {current_balance:.2f}")
@@ -64,29 +63,64 @@ class RiskManager:
             logger.error(f"Failed to initialize risk management: {e}")
             raise
     
+    def _get_current_balance(self) -> float:
+        """Get current balance based on trading mode"""
+        try:
+            if config.binance.trading_mode == "futures":
+                account = binance_client.get_futures_account()
+                return float(account.get('totalWalletBalance', 0.0))
+            else:
+                balance_info = binance_client.get_balance(config.trading.base_currency)
+                if isinstance(balance_info, dict) and 'total' in balance_info:
+                    total_value = balance_info['total']
+                    return float(total_value) if isinstance(total_value, (int, float)) else 0.0
+                else:
+                    return 0.0
+        except Exception as e:
+            logger.error(f"Failed to get current balance: {e}")
+            return 0.0
+    
+    def _get_available_balance(self) -> float:
+        """Get available balance based on trading mode"""
+        try:
+            if config.binance.trading_mode == "futures":
+                account = binance_client.get_futures_account()
+                return float(account.get('availableBalance', 0.0))
+            else:
+                balance_info = binance_client.get_balance(config.trading.base_currency)
+                if isinstance(balance_info, dict) and 'free' in balance_info:
+                    free_value = balance_info['free']
+                    return float(free_value) if isinstance(free_value, (int, float)) else 0.0
+                else:
+                    return 0.0
+        except Exception as e:
+            logger.error(f"Failed to get available balance: {e}")
+            return 0.0
+    
     def get_current_metrics(self) -> RiskMetrics:
         """Get current risk metrics"""
         try:
             # Get current balance
-            balance = binance_client.get_balance(config.trading.base_currency)
-            total_balance = balance.get('total', 0.0)
-            available_balance = balance.get('free', 0.0)
+            total_balance = self._get_current_balance()
+            available_balance = self._get_available_balance()
             
             # Calculate position values
             total_positions_value = self._calculate_positions_value()
             
-            # Calculate PnL
-            daily_pnl = total_balance - self.daily_start_balance if self.daily_start_balance else 0.0
-            total_pnl = total_balance - self.session_start_balance if self.session_start_balance else 0.0
+            # Calculate PnL - ensure all values are float
+            daily_start = self.daily_start_balance or 0.0
+            session_start = self.session_start_balance or 0.0
+            daily_pnl = total_balance - daily_start
+            total_pnl = total_balance - session_start
             
             # Calculate max drawdown
             max_drawdown = 0.0
-            if self.max_balance_today:
+            if self.max_balance_today is not None and self.max_balance_today > 0:
                 drawdown = (self.max_balance_today - total_balance) / self.max_balance_today
                 max_drawdown = max(drawdown, 0.0)
             
             # Determine risk level
-            risk_level = self._assess_risk_level(daily_pnl, total_balance, max_drawdown)
+            risk_level = self._assess_risk_level(daily_pnl, max_drawdown)
             
             return RiskMetrics(
                 total_balance=total_balance,
@@ -113,9 +147,10 @@ class RiskManager:
                 return False, "Trading halted due to critical risk level"
             
             # Check daily loss limit
-            daily_loss_pct = abs(metrics.daily_pnl) / self.daily_start_balance if self.daily_start_balance else 0
-            if metrics.daily_pnl < 0 and daily_loss_pct > config.trading.max_daily_loss_pct:
-                return False, f"Daily loss limit exceeded: {daily_loss_pct:.2%}"
+            if self.daily_start_balance and self.daily_start_balance > 0:
+                daily_loss_pct = abs(metrics.daily_pnl) / self.daily_start_balance
+                if metrics.daily_pnl < 0 and daily_loss_pct > config.trading.max_daily_loss_pct:
+                    return False, f"Daily loss limit exceeded: {daily_loss_pct:.2%}"
             
             # Check max drawdown
             if metrics.max_drawdown > config.trading.max_drawdown_pct:
@@ -134,10 +169,11 @@ class RiskManager:
                 return False, f"Insufficient balance: {amount:.2f} > {metrics.available_balance:.2f}"
             
             # Check position size limits
-            position_pct = amount / metrics.total_balance
-            max_position_pct = config.trading.position_size_pct * 2  # Allow up to 2x normal size
-            if position_pct > max_position_pct:
-                return False, f"Position size too large: {position_pct:.2%} > {max_position_pct:.2%}"
+            if metrics.total_balance > 0:
+                position_pct = amount / metrics.total_balance
+                max_position_pct = config.trading.position_size_pct * 2  # Allow up to 2x normal size
+                if position_pct > max_position_pct:
+                    return False, f"Position size too large: {position_pct:.2%} > {max_position_pct:.2%}"
             
             return True, "Position approved"
             
@@ -152,7 +188,6 @@ class RiskManager:
                 return False, f"No position found for {symbol}"
             
             # Generally, we should always be able to close positions
-            # unless there are severe technical issues
             return True, "Position closure approved"
             
         except Exception as e:
@@ -196,8 +231,8 @@ class RiskManager:
             return entry_price  # Fallback to entry price
     
     def add_position(self, symbol: str, side: str, quantity: float, 
-                    entry_price: float, stop_loss: float = None, 
-                    take_profit: float = None) -> None:
+                    entry_price: float, stop_loss: Optional[float] = None, 
+                    take_profit: Optional[float] = None) -> None:
         """Add a new position to tracking"""
         try:
             if stop_loss is None:
@@ -279,7 +314,12 @@ class RiskManager:
                 try:
                     # Get current price
                     ticker = binance_client.get_24hr_ticker(symbol)
-                    current_price = float(ticker['lastPrice'])
+                    
+                    if isinstance(ticker, dict) and 'lastPrice' in ticker:
+                        current_price = float(ticker['lastPrice'])
+                    else:
+                        # Use entry price as fallback
+                        current_price = position['entry_price']
                     
                     # Calculate position value
                     position_value = position['quantity'] * current_price
@@ -315,12 +355,13 @@ class RiskManager:
             logger.error(f"Error calculating unrealized PnL: {e}")
             return 0.0
     
-    def _assess_risk_level(self, daily_pnl: float, total_balance: float, 
-                          max_drawdown: float) -> str:
+    def _assess_risk_level(self, daily_pnl: float, max_drawdown: float) -> str:
         """Assess current risk level"""
         try:
             # Check daily loss
-            daily_loss_pct = abs(daily_pnl) / self.daily_start_balance if self.daily_start_balance and daily_pnl < 0 else 0
+            daily_loss_pct = 0.0
+            if self.daily_start_balance and self.daily_start_balance > 0 and daily_pnl < 0:
+                daily_loss_pct = abs(daily_pnl) / self.daily_start_balance
             
             # Critical level
             if (daily_loss_pct > config.trading.max_daily_loss_pct * 0.9 or 
@@ -388,8 +429,8 @@ class RiskManager:
             if metrics.position_count >= config.trading.max_positions * 0.8:
                 recommendations.append("Approaching maximum position limit")
             
-            if metrics.daily_pnl < 0:
-                daily_loss_pct = abs(metrics.daily_pnl) / self.daily_start_balance if self.daily_start_balance else 0
+            if metrics.daily_pnl < 0 and self.daily_start_balance and self.daily_start_balance > 0:
+                daily_loss_pct = abs(metrics.daily_pnl) / self.daily_start_balance
                 recommendations.append(f"Daily loss: {daily_loss_pct:.2%}")
             
             if not recommendations:
