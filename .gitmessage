@@ -1,0 +1,29 @@
+# <type>: <subject>
+#
+# <body>
+#
+# <footer>
+
+# Type should be one of the following:
+# * feat: A new feature
+# * fix: A bug fix
+# * docs: Documentation only changes
+# * style: Changes that do not affect the meaning of the code
+# * refactor: A code change that neither fixes a bug nor adds a feature
+# * perf: A code change that improves performance
+# * test: Adding missing tests or correcting existing tests
+# * chore: Changes to the build process or auxiliary tools
+#
+# Subject line should:
+# * Use imperative mood ("Add feature" not "Added feature")
+# * Not end with a period
+# * Be 50 characters or less
+#
+# Body should:
+# * Wrap at 72 characters
+# * Explain what and why, not how
+# * Can include multiple paragraphs
+#
+# Footer should:
+# * Include issue references (Closes #123, Fixes #456)
+# * Include breaking changes (BREAKING CHANGE: description)
