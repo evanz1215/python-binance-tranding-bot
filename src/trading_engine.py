@@ -3,8 +3,8 @@ Main trading engine that orchestrates all components
 """
 import asyncio
 import time
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from datetime import datetime
+from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 from loguru import logger
 
@@ -14,7 +14,7 @@ from .data_manager_fixed import data_manager
 from .risk_manager import risk_manager
 from .strategies import get_strategy, Signal
 from .database.models import (
-    Strategy as StrategyModel, Position, Trade, 
+    Strategy as StrategyModel, Trade, 
     TradingSession, get_session_factory
 )
 
@@ -30,6 +30,9 @@ class TradingEngine:
         self.session_id = None
         self.monitored_symbols = []
         self.last_analysis_time = {}
+        # 初始化任務屬性
+        self._monitor_task = None
+        self._main_loop_task = None
         
     def get_session(self) -> Session:
         """Get database session"""
@@ -49,6 +52,9 @@ class TradingEngine:
             # Start main trading loop in background
             logger.info("Trading engine initialization completed, starting main loop...")
             asyncio.create_task(self._main_loop())
+            
+            # Create persistent monitor
+            self.create_persistent_monitor()
             
         except Exception as e:
             logger.error(f"Trading engine initialization error: {e}")
@@ -95,15 +101,19 @@ class TradingEngine:
             logger.info(f"Monitoring {len(self.monitored_symbols)} symbols")
               # Create trading session
             self.session_id = f"session_{int(datetime.utcnow().timestamp())}"
-            
-            # Get initial balance from futures account
+              # Get initial balance from futures account
             try:
                 if config.binance.trading_mode == "futures":
                     account = binance_client.get_futures_account()
                     initial_balance = float(account.get('totalWalletBalance', 0.0))
                 else:
                     balance = binance_client.get_balance(config.trading.base_currency)
-                    initial_balance = balance.get('total', 0.0)
+                    if isinstance(balance, list) and balance:
+                        initial_balance = float(balance[0].get('free', 0.0)) + float(balance[0].get('locked', 0.0))
+                    elif isinstance(balance, dict):
+                        initial_balance = balance.get('total', 0.0)
+                    else:
+                        initial_balance = 0.0
             except Exception as e:
                 logger.warning(f"Failed to get balance, using default: {e}")
                 initial_balance = 0.0
@@ -277,8 +287,7 @@ class TradingEngine:
                     logger.error(f"Error processing signal {signal}: {e}")
                     continue
             
-        except Exception as e:
-            logger.error(f"Error processing signals: {e}")
+        except Exception as e:            logger.error(f"Error processing signals: {e}")
     
     async def _process_single_signal(self, signal: Signal) -> None:
         """Process a single trading signal"""
@@ -288,7 +297,12 @@ class TradingEngine:
             
             # Get current price
             ticker = binance_client.get_24hr_ticker(symbol)
-            current_price = float(ticker['lastPrice'])
+            if isinstance(ticker, dict):
+                current_price = float(ticker.get('lastPrice', 0))
+            elif isinstance(ticker, list) and ticker:
+                current_price = float(ticker[0].get('lastPrice', 0))
+            else:
+                current_price = 0.0
             
             # Check if we have existing position
             existing_position = symbol in risk_manager.positions
@@ -442,8 +456,7 @@ class TradingEngine:
                 session.add(trade)
                 session.commit()
                 
-        except Exception as e:
-            logger.error(f"Error recording trade: {e}")
+        except Exception as e:            logger.error(f"Error recording trade: {e}")
     
     async def _update_positions(self) -> None:
         """Update all positions with current prices and check stop/take profit"""
@@ -452,7 +465,12 @@ class TradingEngine:
                 try:
                     # Get current price
                     ticker = binance_client.get_24hr_ticker(symbol)
-                    current_price = float(ticker['lastPrice'])
+                    if isinstance(ticker, dict):
+                        current_price = float(ticker.get('lastPrice', 0))
+                    elif isinstance(ticker, list) and ticker:
+                        current_price = float(ticker[0].get('lastPrice', 0))
+                    else:
+                        current_price = 0.0
                     
                     # Update position and check triggers
                     triggers = risk_manager.update_position_prices(symbol, current_price)
@@ -518,17 +536,50 @@ class TradingEngine:
                 try:
                     # Get current price
                     ticker = binance_client.get_24hr_ticker(symbol)
-                    current_price = float(ticker['lastPrice'])
-                    
-                    # Create emergency sell signal
+                    if isinstance(ticker, dict):
+                        current_price = float(ticker.get('lastPrice', 0))
+                    elif isinstance(ticker, list) and ticker:
+                        current_price = float(ticker[0].get('lastPrice', 0))
+                    else:
+                        current_price = 0.0
+                      # Create emergency sell signal
                     signal = Signal(symbol, "SELL", 1.0, "Emergency stop")
                     await self._execute_sell_order(signal, current_price)
                     
                 except Exception as e:
                     logger.error(f"Error closing position {symbol} during emergency stop: {e}")
-            
+                    
         except Exception as e:
             logger.error(f"Error during emergency stop: {e}")
+    
+    def create_persistent_monitor(self):
+        """創建持久性監控器，確保交易引擎持續運行"""
+        if self._monitor_task is None or self._monitor_task.done():
+            self._monitor_task = asyncio.create_task(self._persistent_monitor())
+    
+    async def _persistent_monitor(self):
+        """持久性監控主循環"""
+        logger.info("Starting persistent monitor...")
+        monitor_interval = 30  # 30 秒檢查一次
+        
+        while True:
+            try:
+                # 檢查主循環是否還在運行
+                if self.is_running and self._main_loop_task is None:
+                    logger.warning("Main trading loop not found, restarting...")
+                    self._main_loop_task = asyncio.create_task(self._main_loop())
+                
+                # 檢查是否有異常停止
+                if self._main_loop_task is not None and self._main_loop_task.done():
+                    if self.is_running:
+                        logger.warning("Main trading loop stopped unexpectedly, restarting...")
+                        self._main_loop_task = asyncio.create_task(self._main_loop())
+                
+                await asyncio.sleep(monitor_interval)
+                
+            except Exception as e:
+                logger.error(f"Error in persistent monitor: {e}")
+                await asyncio.sleep(60)  # 等待一分鐘後重試
     
     def get_status(self) -> Dict[str, Any]:
         """Get current trading engine status"""

@@ -111,7 +111,7 @@ async def get_positions():
 async def get_risk_report():
     """Get risk analysis report"""
     try:
-        report = risk_manager.generate_risk_report()
+        report = risk_manager.get_risk_report()
         return report
     except Exception as e:
         logger.error(f"Error generating risk report: {e}")

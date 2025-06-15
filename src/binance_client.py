@@ -488,6 +488,54 @@ class BinanceClient:
             logger.error(f"Failed to get futures positions: {e}")
             return []
 
+    def calculate_quantity(self, symbol: str, position_size: float, current_price: float) -> float:
+        """計算交易數量，基於持倉大小和當前價格"""
+        try:
+            # 獲取交易對資訊
+            exchange_info = self.get_exchange_info()
+            symbol_info = None
+            
+            for s in exchange_info.get('symbols', []):
+                if s.get('symbol') == symbol:
+                    symbol_info = s
+                    break
+            
+            if not symbol_info:
+                logger.error(f"Symbol {symbol} not found in exchange info")
+                return 0.0
+            
+            # 獲取最小數量限制
+            min_qty = 0.0
+            step_size = 0.0
+            
+            for filter_item in symbol_info.get('filters', []):
+                if filter_item.get('filterType') == 'LOT_SIZE':
+                    min_qty = float(filter_item.get('minQty', 0))
+                    step_size = float(filter_item.get('stepSize', 0))
+                    break
+            
+            # 計算基礎數量（基於持倉大小的USD價值）
+            if current_price > 0:
+                base_quantity = position_size / current_price
+            else:
+                return 0.0
+            
+            # 調整到符合步長要求
+            if step_size > 0:
+                quantity = round(base_quantity / step_size) * step_size
+            else:
+                quantity = base_quantity
+            
+            # 確保不小於最小數量
+            if quantity < min_qty:
+                quantity = min_qty
+            
+            return quantity
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate quantity for {symbol}: {e}")
+            return 0.0
+
 # Create global instance for backwards compatibility
 # This will be initialized when first imported
 try:
@@ -495,3 +543,18 @@ try:
 except Exception as e:
     logger.warning(f"Failed to create global binance_client instance: {e}")
     binance_client = None
+
+# Factory function for getting client instances
+def get_client(trading_type: Optional[str] = None) -> Optional[BinanceClient]:
+    """Get a client instance for the specified trading type"""
+    try:
+        if trading_type == "futures":
+            return BinanceClient("futures")
+        elif trading_type == "spot":
+            return BinanceClient("spot")
+        else:
+            # Return the global instance or create a new one
+            return binance_client if binance_client else BinanceClient()
+    except Exception as e:
+        logger.error(f"Failed to create {trading_type} client: {e}")
+        return None
