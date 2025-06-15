@@ -260,7 +260,8 @@ class DataManager:
                         
                         if completed % 10 == 0:
                             logger.info(f"Progress: {completed}/{total_tasks} tasks completed")
-                              # Rate limiting
+                        
+                        # Rate limiting
                         import time
                         time.sleep(0.1)
                         

@@ -5,6 +5,7 @@ import asyncio
 import argparse
 import sys
 from datetime import datetime, timedelta
+from typing import Optional, List
 from loguru import logger
 
 from src.config import config
@@ -96,7 +97,7 @@ async def run_backtest(strategy_name: str, symbols: list, days: int = 30, **stra
         raise
 
 
-async def update_data(symbols: list = None, timeframes: list = None):
+def update_data(symbols: Optional[List[str]] = None, timeframes: Optional[List[str]] = None):
     """Update market data"""
     try:
         logger.info("Updating market data...")
@@ -115,8 +116,8 @@ async def update_data(symbols: list = None, timeframes: list = None):
         # Update symbol info first
         data_manager.update_symbol_info()
         
-        # Update market data
-        await data_manager.update_all_market_data(symbols, timeframes)
+        # Update market data using bulk collection
+        data_manager.bulk_collect_data(symbols, timeframes)
         
         logger.info("Market data update completed")
         
@@ -208,7 +209,7 @@ def main():
             run_api_server(args.host, args.port)
             
         elif args.command == "update-data":
-            asyncio.run(update_data(args.symbols, args.timeframes))
+            update_data(args.symbols, args.timeframes)
             
         elif args.command == "test-notifications":
             asyncio.run(test_notifications())
