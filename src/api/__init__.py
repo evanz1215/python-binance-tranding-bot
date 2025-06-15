@@ -89,7 +89,7 @@ async def get_status():
                 is_running=True,
                 session_id=getattr(trading_engine, 'session_id', None),
                 strategy=getattr(trading_engine, 'strategy_name', "Unknown"),
-                monitored_symbols=len(getattr(trading_engine, 'symbols', [])),
+                monitored_symbols=len(getattr(trading_engine, 'monitored_symbols', [])),
                 active_positions=active_positions,
                 risk_level="LOW",  # Simplified risk level
                 total_balance=total_balance,

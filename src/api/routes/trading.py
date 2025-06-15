@@ -30,12 +30,14 @@ async def start_trading(background_tasks: BackgroundTasks, strategy: Optional[St
             return {"message": "Trading bot is already running"}
         
         logger.info("Creating new trading engine...")
-        
-        # Create new trading engine
+          # Create new trading engine
         if strategy:
             new_engine = TradingEngine(strategy.name, **strategy.parameters)
         else:
-            new_engine = TradingEngine("ma_cross")  # Default strategy
+            # Use strategy from environment variable
+            import os
+            strategy_name = os.getenv("STRATEGY", "ma_cross")
+            new_engine = TradingEngine(strategy_name)  # Use env strategy
         
         shared_state.set_trading_engine(new_engine)
         logger.info(f"Trading engine created, starting in background...")

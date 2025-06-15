@@ -160,11 +160,9 @@ class TradingEngine:
                 
                 # Update session statistics
                 await self._update_session_stats()
-                
-                # Calculate sleep time to maintain interval
+                  # Calculate sleep time to maintain interval
                 elapsed = time.time() - start_time
                 sleep_time = max(0, loop_interval - elapsed)
-                
                 if sleep_time > 0:
                     await asyncio.sleep(sleep_time)
                 
@@ -175,7 +173,21 @@ class TradingEngine:
     def _get_monitored_symbols(self) -> List[str]:
         """Get list of symbols to monitor"""
         try:
-            # Get active symbols from Binance
+            # Import symbol discovery system
+            from .symbol_discovery import symbol_discovery, is_auto_discovery_enabled
+              # Check if auto discovery is enabled
+            if is_auto_discovery_enabled():
+                logger.info("Using advanced symbol discovery system")
+                symbols = symbol_discovery.discover_symbols_sync()
+                
+                if symbols:
+                    logger.info(f"Auto-discovered {len(symbols)} symbols: {symbols[:10]}...")
+                    return symbols
+                else:
+                    logger.warning("Auto-discovery returned no symbols, falling back to manual method")
+            
+            # Fallback to original method
+            logger.info("Using manual symbol filtering")
             active_symbols = binance_client.filter_symbols_by_criteria(
                 min_volume_24h=config.trading.min_volume_24h,
                 max_symbols=50  # Limit to top 50 by volume
@@ -198,7 +210,8 @@ class TradingEngine:
             
         except Exception as e:
             logger.error(f"Error getting monitored symbols: {e}")
-            return []
+            # Return default symbols as last resort
+            return ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'BNBUSDT']
     
     async def _ensure_market_data(self) -> None:
         """Ensure we have enough market data for analysis"""

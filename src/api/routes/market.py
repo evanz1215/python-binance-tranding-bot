@@ -98,3 +98,73 @@ async def get_account_balances():
     except Exception as e:
         logger.error(f"Error getting account balances: {e}")
         return []
+
+
+@router.get("/monitored-symbols")
+async def get_monitored_symbols():
+    """Get list of currently monitored symbols"""
+    try:
+        from ... import shared_state
+        
+        trading_engine = shared_state.get_trading_engine()
+        
+        if trading_engine and hasattr(trading_engine, 'monitored_symbols'):
+            monitored_symbols = getattr(trading_engine, 'monitored_symbols', [])
+              # Get additional info for each symbol
+            symbols_info = []
+            for symbol in monitored_symbols:
+                try:
+                    # Get 24hr ticker data for each symbol
+                    ticker = binance_client.get_24hr_ticker(symbol)
+                    if ticker:
+                        # Handle case where ticker might be a list
+                        if isinstance(ticker, list):
+                            ticker_data = ticker[0] if ticker else {}
+                        else:
+                            ticker_data = ticker
+                            
+                        symbols_info.append({
+                            "symbol": symbol,
+                            "price": float(ticker_data.get('lastPrice', 0)),
+                            "change_24h": float(ticker_data.get('priceChangePercent', 0)),
+                            "volume_24h": float(ticker_data.get('quoteVolume', 0)),
+                            "high_24h": float(ticker_data.get('highPrice', 0)),
+                            "low_24h": float(ticker_data.get('lowPrice', 0))
+                        })
+                    else:
+                        symbols_info.append({
+                            "symbol": symbol,
+                            "price": 0,
+                            "change_24h": 0,
+                            "volume_24h": 0,
+                            "high_24h": 0,
+                            "low_24h": 0
+                        })
+                except Exception as symbol_error:
+                    logger.warning(f"Error getting data for {symbol}: {symbol_error}")
+                    symbols_info.append({
+                        "symbol": symbol,
+                        "price": 0,
+                        "change_24h": 0,
+                        "volume_24h": 0,
+                        "high_24h": 0,
+                        "low_24h": 0
+                    })
+            
+            return {
+                "monitored_symbols": symbols_info,
+                "total_count": len(monitored_symbols),
+                "is_auto_discovery_enabled": trading_engine.is_running,
+                "last_update": getattr(trading_engine, 'last_symbol_update', None)
+            }
+        else:
+            return {
+                "monitored_symbols": [],
+                "total_count": 0,
+                "is_auto_discovery_enabled": False,
+                "last_update": None
+            }
+            
+    except Exception as e:
+        logger.error(f"Error getting monitored symbols: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
